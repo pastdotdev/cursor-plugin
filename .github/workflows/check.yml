@@ -1,0 +1,64 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  script:
+    name: script on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [14, 16, 22]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Node 16 is the floor. On an older Node the hooks only have to stay silent, so 14 parses it.
+      - name: Parses
+        run: node --check plugins/past/bin/past-hook.mjs
+      - name: Runs with nothing configured
+        if: matrix.node != 14
+        run: |
+          node plugins/past/bin/past-hook.mjs status
+          echo '{"conversation_id":"check","prompt":"Does the prompt hook answer?"}' | node plugins/past/bin/past-hook.mjs prompt
+        env:
+          HOME: ${{ runner.temp }}/home
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # A manifest that does not hold together loads nothing, and says nothing.
+      - name: The manifests hold together
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, existsSync, readdirSync } from "node:fs";
+            import { join } from "node:path";
+            const read = (path) => JSON.parse(readFileSync(path, "utf8"));
+            const fail = (message) => { console.error(message); process.exit(1); };
+            const market = read(".cursor-plugin/marketplace.json");
+            for (const entry of market.plugins) {
+              const manifest = read(join(entry.source, ".cursor-plugin/plugin.json"));
+              if (manifest.name !== entry.name) fail(`${entry.source}: named ${manifest.name}, listed as ${entry.name}`);
+              for (const key of ["rules", "skills", "hooks", "mcpServers", "logo"]) {
+                if (typeof manifest[key] === "string" && !existsSync(join(entry.source, manifest[key]))) fail(`${entry.source}: ${key} names ${manifest[key]}, which is missing`);
+              }
+              read(join(entry.source, manifest.hooks));
+              read(join(entry.source, manifest.mcpServers));
+              for (const skill of readdirSync(join(entry.source, "skills"))) {
+                const text = readFileSync(join(entry.source, "skills", skill, "SKILL.md"), "utf8");
+                if (!new RegExp(`^name: ${skill}$`, "m").test(text)) fail(`skills/${skill}: its name is not its folder`);
+              }
+              console.log(`${entry.name}: ok`);
+            }
+          '
