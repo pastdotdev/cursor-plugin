@@ -1,0 +1,12 @@
+{
+  "name": "past",
+  "owner": { "name": "past.dev" },
+  "metadata": { "description": "past.dev for Cursor" },
+  "plugins": [
+    {
+      "name": "past",
+      "source": "plugins/past",
+      "description": "Your Cursor chats become memory, and every prompt reaches the model with what past.dev recalls for it."
+    }
+  ]
+}

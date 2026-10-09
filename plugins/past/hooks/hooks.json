@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "workspaceOpen": [
+      { "command": "node \"${CURSOR_PLUGIN_ROOT}/bin/past-hook.mjs\" wake", "timeout": 10 }
+    ],
+    "sessionStart": [
+      { "command": "node \"${CURSOR_PLUGIN_ROOT}/bin/past-hook.mjs\" start", "timeout": 10 }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "node \"${CURSOR_PLUGIN_ROOT}/bin/past-hook.mjs\" prompt", "timeout": 6 }
+    ],
+    "afterAgentResponse": [
+      { "command": "node \"${CURSOR_PLUGIN_ROOT}/bin/past-hook.mjs\" reply", "timeout": 5 }
+    ],
+    "stop": [
+      { "command": "node \"${CURSOR_PLUGIN_ROOT}/bin/past-hook.mjs\" stop", "timeout": 5 }
+    ]
+  }
+}
