@@ -119,6 +119,16 @@ plugins/past/
     the plugin's name, the skills (`/past-status`), the tool (`past_recall`), `~/.past`, the key
     prefix `past_sk_`, the data point ids and the recall block's header,
     `=== past · recalled from memory ===`, which the journal reader drops by that exact text.
+13. **A sitting is sent with the connection it was typed under.** The prompt hook writes a
+    fingerprint of the key and the address beside each prompt (`connection`). A prompt typed under
+    another connection than its sitting's starts a new sitting, and a sitting is sent only while
+    its connection is the one in force, whichever way the send starts (the sender, `ingest`); `cut`
+    does not print the others. So what was typed under one project's key never goes to another
+    project. A prompt journaled before 0.1.1 names no connection: the journal was only ever written
+    on a connected machine, so its sitting is sent, and it starts no new sitting, so no chat already
+    in past.dev moves. A sitting kept back holds its last hash in the chat's record, or `null`. The
+    folder's path stays in the journal, where the skills find this workspace's chat by it, and is
+    never sent: `metadata.project` is the folder's name. `SENDER_VERSION` went to 3 with it.
 
 ## Beside other past.dev plugins
 
@@ -150,7 +160,11 @@ everything else of its own in `~/.past/cursor/` and `~/.past/hosts/cursor.json`.
 - `POST /api/v1/ingest/batch`: one item per sitting. `id` gives replacement (`cursor:<chat id>`
   for the first sitting, `cursor:<chat id>:<n>` for the others), `timestamp` dates every memory
   drawn from the item, `label` names the chat (`Cursor · <project> · <branch>`, or `Cursor · no folder`), `metadata` carries
-  `conversationId`, `project`, `cwd`, `gitBranch`, `sitting`, `turns` and `cursorVersion`.
+  `conversationId`, `project`, `gitBranch`, `sitting`, `turns` and `cursorVersion`, and `model` and
+  `effort` where the sitting's latest prompt names them.
+- Cursor names, in every hook's input, the model a turn runs on (`model_id`, or the older `model`)
+  and that model's options (`model_params`, the item `effort` among them). The prompt hook keeps
+  them beside the prompt in the journal; neither is rendered, so neither changes a hash (rule 10).
 - `POST /api/v1/recall`: **`identity` is required**. Recall stays off until `/past-connect` sets
   one.
 - `audience` on ingest: a slug; absent means the whole project. `connect --audience` checks it with

@@ -1,7 +1,7 @@
 {
   "name": "past",
   "displayName": "past.dev",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Your Cursor chats become memory, and every prompt reaches the model with what past.dev recalls for it.",
   "author": { "name": "past.dev" },
   "publisher": "past.dev",

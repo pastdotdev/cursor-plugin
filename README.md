@@ -75,8 +75,14 @@ so nothing already sent is sent again.
 
 ## What leaves your machine
 
-Your prompts as you typed them, the agent's reply to each, and the project and branch names.
-Nothing else.
+Your prompts as you typed them and the agent's reply to each, with the names of the project's
+folder and its branch, the chat's id, Cursor's version, the model the agent ran on with its effort
+level, and the identity you connected with. The folder's path stays on your machine. Recall sends queries: one with a chat's first prompt, the
+first 1,000 characters of each prompt, and the questions the agent asks `past_recall`. Nothing else.
+
+A chat is recorded only once you are connected, and each prompt is sent with the key it was typed
+under, and with no other: what was typed under one project's key never goes to another project. A
+chat goes on, in a new sitting, from the prompt after you change keys.
 
 Never sent: tool calls and their output, file contents, diffs, command output, attachments, the
 model's thinking, what the agent writes between tool calls, and anything injected into the chat
