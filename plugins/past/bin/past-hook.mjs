@@ -37,7 +37,7 @@ const DEFAULT_SITTING_MINUTES = 30;
 const MIN_SITTING_MINUTES = 5;
 const DEFAULT_API_URL = 'https://api.past.dev';
 const MARKER = '=== past · recalled from memory ===';
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 // ---------------------------------------------------------------------------------------- Cursor
 
@@ -221,7 +221,10 @@ function isSynthetic(text) {
 // Conservative redaction. It is not a guarantee and the docs say so, but the obvious shapes (keys,
 // tokens, and assignments whose name says "secret") never leave the machine by accident.
 const SECRET_PATTERNS = [
-  /\b(?:past_sk|past_mk|sk-ant|sk-|ghp_|gho_|ghu_|ghs_|github_pat|xox[baprs]|AKIA|ASIA|glpat)-?[A-Za-z0-9_\-]{12,}/g,
+  // past_ct_ is a past.dev claim token. Its underscore is part of the match, so a name that only
+  // begins with past_ct, such as past_ctx_identifier_value, keeps its bytes: redacting it would
+  // change a chat already in past.dev, and that chat would be sent again as a paid revision.
+  /\b(?:past_sk|past_mk|past_ct_|sk-ant|sk-|ghp_|gho_|ghu_|ghs_|github_pat|xox[baprs]|AKIA|ASIA|glpat)-?[A-Za-z0-9_\-]{12,}/g,
   /\bBearer\s+[A-Za-z0-9._\-]{20,}/gi,
   /\beyJ[A-Za-z0-9._\-]{20,}/g,
   /\b([A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN|API_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Z0-9_]*)\s*[=:]\s*\S+/g,
@@ -259,8 +262,14 @@ function renderSitting(sitting) {
 function sittingsOf(parsed, minutes) {
   const sittings = [];
   for (const turn of parsed.turns) {
-    if (!sittings.length || (turn.role === 'user' && turn.quiet >= minutes * 60000)) {
-      sittings.push({ turns: [], firstAt: turn.at, project: turn.project, branch: turn.branch, cwd: turn.cwd });
+    const open = sittings[sittings.length - 1];
+    // A prompt typed under another connection starts a new sitting: a sitting belongs to one. A
+    // prompt journaled before connections were recorded names none, and starts nothing.
+    const moved = turn.role === 'user' && Boolean(open) && turn.connection !== undefined && open.connection !== undefined && turn.connection !== open.connection;
+    if (!open || (turn.role === 'user' && turn.quiet >= minutes * 60000) || moved) {
+      // A sitting that starts on a reply is in the place of the one before it.
+      const connection = turn.role === 'user' ? turn.connection : open && open.connection;
+      sittings.push({ turns: [], firstAt: turn.at, project: turn.project, branch: turn.branch, connection });
     }
     const sitting = sittings[sittings.length - 1];
     sitting.turns.push(turn);
@@ -268,7 +277,7 @@ function sittingsOf(parsed, minutes) {
     if (turn.role === 'user') {
       if (turn.project) sitting.project = turn.project;
       if (turn.branch) sitting.branch = turn.branch;
-      if (turn.cwd) sitting.cwd = turn.cwd;
+      if (sitting.connection === undefined) sitting.connection = turn.connection;
     }
   }
   return sittings;
@@ -285,6 +294,9 @@ const hashOf = (text) => createHash('sha256').update(text).digest('hex');
  * What sending a chat carries now: each sitting rendered, and the ones past.dev does not hold yet.
  * A chat keeps the sitting length it was first sent with: a new value in the config applies to the
  * chats sent after it, and the boundaries of one already in past.dev never move.
+ * `changed` holds the sittings to send; `kept` the ones that differ too but were typed under another
+ * connection, and stay on this machine. A sitting journaled before connections were recorded names
+ * none: the journal was only ever written on a connected machine, so it is sent.
  */
 function planSend(parsed, record, config) {
   const minutes = (record && record.sittingMinutes) || config.sittingMinutes;
@@ -293,7 +305,10 @@ function planSend(parsed, record, config) {
     return { index, sitting, content, hash: hashOf(content), bytes: Buffer.byteLength(content) };
   });
   const known = record && Array.isArray(record.sittings) ? record.sittings : [];
-  return { minutes, sittings, changed: sittings.filter((part) => known[part.index] !== part.hash) };
+  const connection = connectionOf(config);
+  const mine = (part) => part.sitting.connection === undefined || part.sitting.connection === connection;
+  const differing = sittings.filter((part) => known[part.index] !== part.hash);
+  return { minutes, sittings, known, changed: differing.filter(mine), kept: differing.filter((part) => !mine(part)) };
 }
 
 const credits = (bytes) => Math.ceil(bytes / 350);
@@ -310,6 +325,11 @@ const kilobytes = (parts) => (parts.reduce((sum, part) => sum + part.bytes, 0) /
 
 const chatFile = (chat) => String(chat).replace(/[^A-Za-z0-9-]/g, '');
 const journalPath = (chat) => join(CURSOR_DIR, `${chatFile(chat)}.jsonl`);
+
+// A fingerprint of the key and address a prompt was typed under, kept beside it in the journal. A
+// sitting is sent with the connection it was typed under and with no other: what a person typed
+// under another project's key stays on this machine.
+const connectionOf = (config) => hashOf(`${config.apiUrl}\n${config.apiKey}`).slice(0, 16);
 
 function appendJournal(chat, entry) {
   privateDir(CURSOR_DIR);
@@ -347,10 +367,11 @@ function readJournal(path) {
     if (entry.kind === 'prompt') {
       const quiet = Number.isNaN(last) ? 0 : Math.max(0, at - last);
       place = { project: entry.project || place.project, branch: entry.branch || '', cwd: entry.cwd || place.cwd };
+      const connection = typeof entry.connection === 'string' ? entry.connection : undefined;
       if (entry.cursor) cursor = entry.cursor;
       if (entry.mode) modes.add(entry.mode);
       if (entry.generation) prompted.add(entry.generation);
-      if (text && !isSynthetic(text)) turns.push({ role: 'user', at: entry.at, text, quiet, ...place });
+      if (text && !isSynthetic(text)) turns.push({ role: 'user', at: entry.at, text, quiet, connection, ...place });
       open = true;
     } else if (entry.kind === 'reply') {
       // A reply belongs to the conversation when its prompt does. The answer to a prompt that only
@@ -554,7 +575,6 @@ async function sendChat(config, chat, parsed, plan) {
       client: SOURCE,
       conversationId: chat,
       project: part.sitting.project || '',
-      cwd: part.sitting.cwd || '',
       gitBranch: part.sitting.branch || '',
       sitting: part.index + 1,
       turns: part.sitting.turns.length,
@@ -571,8 +591,12 @@ async function sendChat(config, chat, parsed, plan) {
     updateState((fresh) => { book(fresh).lastError = lastError; });
     return { error: lastError.status, code };
   }
+  // A sitting kept on this machine keeps the hash it was last sent with, or none: it is not in
+  // past.dev as it is now.
+  const hashes = plan.sittings.map((part) => part.hash);
+  for (const part of plan.kept) hashes[part.index] = plan.known[part.index] || null;
   const record = {
-    sittings: plan.sittings.map((part) => part.hash),
+    sittings: hashes,
     sittingMinutes: plan.minutes,
     sentAt: new Date().toISOString(),
     turns: parsed.turns.length,
@@ -652,6 +676,7 @@ async function modePrompt(config) {
         appendJournal(chat, {
           kind: 'prompt', at: new Date().toISOString(), generation: input.generation_id || '', text: prompt,
           mode: input.composer_mode || '', ...place, cursor: input.cursor_version || cursorVersion,
+          connection: connectionOf(config),
         });
       } catch { /* the prompt still goes through */ }
     }
@@ -715,7 +740,7 @@ async function modeWake(config) {
 
 // Bumped whenever the sender changes: a sender an older version started is replaced, because it is
 // a long-lived process still running the code it was started with.
-const SENDER_VERSION = 2;
+const SENDER_VERSION = 3;
 const SENDER_SLICE_MS = 60000;
 
 function isAlive(pid) {
@@ -950,6 +975,8 @@ function when(ms) {
   return `${today ? '' : `${date.toDateString().slice(4, 10)} `}${date.toTimeString().slice(0, 5)}`;
 }
 
+const NOTHING_TO_SEND = 'Nothing to send from that chat: it holds no prompt typed under the key this machine is connected with.';
+
 // What would leave the machine, before it leaves: every sitting of a chat, priced.
 function modeCut(config, argv) {
   const { target, error } = targetChat(argv);
@@ -958,14 +985,18 @@ function modeCut(config, argv) {
   if (!parsed) { console.log('Nothing to send from that chat: no prompt typed in it was recorded.'); return; }
   const record = book(loadState()).chats[target.chat];
   const plan = planSend(parsed, record, config);
+  // Sittings that stay on this machine are not shown.
+  const shown = plan.sittings.filter((part) => !plan.kept.includes(part));
+  if (!shown.length) { console.log(NOTHING_TO_SEND); return; }
   // As the sender sees it: a chat whose journal has not changed since its send is not sent again.
   if (record && record.sentAt && Date.parse(record.sentAt) >= target.mtime) plan.changed = [];
-  const held = plan.sittings.length - plan.changed.length;
+  const held = shown.length - plan.changed.length;
   const cost = !plan.changed.length
-    ? `${kilobytes(plan.sittings)} KB, all in past.dev`
+    ? `${kilobytes(shown)} KB, all in past.dev`
     : `${kilobytes(plan.changed)} KB to send · about ${creditsOf(plan.changed)} credits` + (held ? ` · ${held} sitting(s) already in past.dev` : '');
-  console.error(`# chat ${short(target.chat)} · ${parsed.turns.length} turns in ${plan.sittings.length} sitting(s) · ${cost}\n`);
-  console.log(plan.sittings.map((part) => part.content).join('\n'));
+  const turns = shown.reduce((sum, part) => sum + part.sitting.turns.length, 0);
+  console.error(`# chat ${short(target.chat)} · ${turns} turns in ${shown.length} sitting(s) · ${cost}\n`);
+  console.log(shown.map((part) => part.content).join('\n'));
   let next;
   if (!plan.changed.length) next = 'Already in past.dev, unchanged.';
   else {
@@ -985,7 +1016,10 @@ async function modeIngest(config, argv) {
   const parsed = readJournal(target.path);
   if (!parsed) { console.log('Nothing to send from that chat: no prompt typed in it was recorded.'); return; }
   const plan = planSend(parsed, book(loadState()).chats[target.chat], config);
-  if (!plan.changed.length) { console.log(`Chat ${short(target.chat)} is already in past.dev, unchanged.`); return; }
+  if (!plan.changed.length) {
+    console.log(plan.kept.length ? NOTHING_TO_SEND : `Chat ${short(target.chat)} is already in past.dev, unchanged.`);
+    return;
+  }
   const outcome = await sendChat(config, target.chat, parsed, plan);
   if (outcome.error) {
     console.log(`past.dev refused the send: ${outcome.error}${outcome.code ? ` ${outcome.code}` : ''}. ${commandOf('status')} has the details.`);
