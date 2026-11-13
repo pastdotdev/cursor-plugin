@@ -160,7 +160,11 @@ everything else of its own in `~/.past/cursor/` and `~/.past/hosts/cursor.json`.
 - `POST /api/v1/ingest/batch`: one item per sitting. `id` gives replacement (`cursor:<chat id>`
   for the first sitting, `cursor:<chat id>:<n>` for the others), `timestamp` dates every memory
   drawn from the item, `label` names the chat (`Cursor · <project> · <branch>`, or `Cursor · no folder`), `metadata` carries
-  `conversationId`, `project`, `gitBranch`, `sitting`, `turns` and `cursorVersion`.
+  `conversationId`, `project`, `gitBranch`, `sitting`, `turns` and `cursorVersion`, and `model` and
+  `effort` where the sitting's latest prompt names them.
+- Cursor names, in every hook's input, the model a turn runs on (`model_id`, or the older `model`)
+  and that model's options (`model_params`, the item `effort` among them). The prompt hook keeps
+  them beside the prompt in the journal; neither is rendered, so neither changes a hash (rule 10).
 - `POST /api/v1/recall`: **`identity` is required**. Recall stays off until `/past-connect` sets
   one.
 - `audience` on ingest: a slug; absent means the whole project. `connect --audience` checks it with

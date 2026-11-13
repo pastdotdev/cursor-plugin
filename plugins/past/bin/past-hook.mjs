@@ -277,6 +277,8 @@ function sittingsOf(parsed, minutes) {
     if (turn.role === 'user') {
       if (turn.project) sitting.project = turn.project;
       if (turn.branch) sitting.branch = turn.branch;
+      // The model its latest prompt ran on, and that model's effort, where the prompt names them.
+      if (turn.model) { sitting.model = turn.model; sitting.effort = turn.effort; }
       if (sitting.connection === undefined) sitting.connection = turn.connection;
     }
   }
@@ -331,6 +333,19 @@ const journalPath = (chat) => join(CURSOR_DIR, `${chatFile(chat)}.jsonl`);
 // under another project's key stays on this machine.
 const connectionOf = (config) => hashOf(`${config.apiUrl}\n${config.apiKey}`).slice(0, 16);
 
+// Cursor names, in every hook's input, the model a turn runs on (`model_id`, or the older `model`)
+// and that model's options, the reasoning effort among them. Kept beside the prompt, for the
+// sitting's metadata; a prompt that names neither adds nothing to its entry.
+function ranOn(input) {
+  const named = typeof input.model_id === 'string' && input.model_id ? input.model_id : input.model;
+  const options = Array.isArray(input.model_params) ? input.model_params : [];
+  const effort = options.find((option) => option && option.id === 'effort' && typeof option.value === 'string' && option.value);
+  const ran = {};
+  if (typeof named === 'string' && named) ran.model = named.slice(0, 100);
+  if (effort) ran.effort = effort.value.slice(0, 40);
+  return ran;
+}
+
 function appendJournal(chat, entry) {
   privateDir(CURSOR_DIR);
   // Appended in one write, created private: a journal holds what a person typed.
@@ -368,10 +383,12 @@ function readJournal(path) {
       const quiet = Number.isNaN(last) ? 0 : Math.max(0, at - last);
       place = { project: entry.project || place.project, branch: entry.branch || '', cwd: entry.cwd || place.cwd };
       const connection = typeof entry.connection === 'string' ? entry.connection : undefined;
+      const model = typeof entry.model === 'string' ? entry.model : '';
+      const effort = typeof entry.effort === 'string' ? entry.effort : '';
       if (entry.cursor) cursor = entry.cursor;
       if (entry.mode) modes.add(entry.mode);
       if (entry.generation) prompted.add(entry.generation);
-      if (text && !isSynthetic(text)) turns.push({ role: 'user', at: entry.at, text, quiet, connection, ...place });
+      if (text && !isSynthetic(text)) turns.push({ role: 'user', at: entry.at, text, quiet, connection, model, effort, ...place });
       open = true;
     } else if (entry.kind === 'reply') {
       // A reply belongs to the conversation when its prompt does. The answer to a prompt that only
@@ -579,6 +596,9 @@ async function sendChat(config, chat, parsed, plan) {
       sitting: part.index + 1,
       turns: part.sitting.turns.length,
       cursorVersion: parsed.cursor || '',
+      // Not part of the rendered content: a sitting whose prompts name no model adds nothing.
+      model: part.sitting.model || undefined,
+      effort: part.sitting.effort || undefined,
     },
   }));
   if (parsed.cursor) cursorVersion = parsed.cursor;
@@ -676,7 +696,7 @@ async function modePrompt(config) {
         appendJournal(chat, {
           kind: 'prompt', at: new Date().toISOString(), generation: input.generation_id || '', text: prompt,
           mode: input.composer_mode || '', ...place, cursor: input.cursor_version || cursorVersion,
-          connection: connectionOf(config),
+          connection: connectionOf(config), ...ranOn(input),
         });
       } catch { /* the prompt still goes through */ }
     }

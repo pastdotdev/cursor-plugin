@@ -76,8 +76,8 @@ so nothing already sent is sent again.
 ## What leaves your machine
 
 Your prompts as you typed them and the agent's reply to each, with the names of the project's
-folder and its branch, the chat's id, Cursor's version and the identity you connected with. The
-folder's path stays on your machine. Recall sends queries: one with a chat's first prompt, the
+folder and its branch, the chat's id, Cursor's version, the model the agent ran on with its effort
+level, and the identity you connected with. The folder's path stays on your machine. Recall sends queries: one with a chat's first prompt, the
 first 1,000 characters of each prompt, and the questions the agent asks `past_recall`. Nothing else.
 
 A chat is recorded only once you are connected, and each prompt is sent with the key it was typed
